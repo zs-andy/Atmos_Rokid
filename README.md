@@ -1,66 +1,104 @@
-# Atmos
+<div align="center">
 
-本项目是一个本地部署 FastVLM 视觉语言模型的 Demo，包含 iOS/macOS 服务端和 Android 客户端。
+# Atmos — Rokid Glasses
 
-## 项目结构
+**Real-time ambient perception system for visually impaired users on Rokid Glasses, powered by on-device Apple FastVLM, YOLO, and a Swift Vapor inference server.**
 
-- **Server**: Swift 编写的服务端，集成 FastVLM 和 YOLO 目标检测
-- **Atmos**: Android 客户端应用
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Client](https://img.shields.io/badge/Client-Kotlin%20%7C%20Android%20%2F%20Rokid-7F52FF.svg)](#architecture)
+[![Server](https://img.shields.io/badge/Server-Swift%20%7C%20Vapor%20%7C%20MLX-F05138.svg)](#architecture)
+[![Models](https://img.shields.io/badge/Models-FastVLM%20%2B%20YOLO-10B981.svg)](#fastvlm-model-setup)
 
-## FastVLM 模型部署
+**English** | [简体中文](README.zh-CN.md)
 
-本项目支持三种不同规模的 FastVLM 模型，可根据设备性能和需求选择：
+</div>
 
-### 模型选项
+---
 
-| 模型规模 | 量化方式 | 下载链接 |
-|---------|---------|---------|
-| 0.5B | FP16 | [下载](https://ml-site.cdn-apple.com/datasets/fastvlm/llava-fastvithd_0.5b_stage3_llm.fp16.zip) |
-| 1.5B | INT8 | [下载](https://ml-site.cdn-apple.com/datasets/fastvlm/llava-fastvithd_1.5b_stage3_llm.int8.zip) |
-| 7B | INT4 | [下载](https://ml-site.cdn-apple.com/datasets/fastvlm/llava-fastvithd_7b_stage3_llm.int4.zip) |
+## Why Atmos?
 
-### 模型部署步骤
+Smart glasses can act as a quiet pair of eyes for people with visual impairments — but cloud-only vision pipelines introduce latency, connectivity dependence, and privacy concerns.
 
-1. 根据需要下载上述模型之一
-2. 解压下载的 zip 文件
-3. 将解压后的文件夹重命名为 `model`
-4. 将 `model` 文件夹放置在 `Server/Server/Module/FastVLM/` 目录下
+**Atmos** pairs an Android/Rokid Glasses camera client with a **local Apple Silicon inference server** over LAN, combining two complementary perception loops:
 
-最终目录结构应为：
+1. **Fast spatial detection loop (~5 FPS / every 0.2s)**: Streams compressed camera frames to `POST /yolo` for real-time object detection (`YOLODetector`) and spatial overlay/calibration.
+2. **Ambient scene narration loop (every 5s)**: Sends key frames to `POST /detect` where local **Apple FastVLM** (`MLXLMCommon`) generates natural-language scene descriptions paired with spoken audio (`base64` MP3 played directly on the glasses).
+
+## Architecture
+
+```text
+┌─────────────────────────────────────┐         LAN HTTP (:8080)         ┌──────────────────────────────────────────┐
+│   Rokid Glasses / Android Client    │ ───────────────────────────────► │   macOS Menu Bar Server (Swift + Vapor)  │
+│   (Atmos/ · Kotlin · Compose)       │                                  │   (Server/ · SwiftUI · MLXLMCommon)      │
+│                                     │  POST /yolo   (every 0.2s)       │                                          │
+│  • Camera2 capture & compression    │ ◄──── bounding boxes JSON ─────  │  • YOLODetector (real-time objects)      │
+│  • DetectionOverlayView             │                                  │  • FastVLMModel (0.5B / 1.5B / 7B local) │
+│  • CalibrationDialog                │  POST /detect (every 5.0s)       │  • Live frame preview & status menu bar  │
+│  • MediaPlayer voice feedback       │ ◄──── { result, audio } ───────  │                                          │
+└─────────────────────────────────────┘                                  └──────────────────────────────────────────┘
 ```
+
+## Project Structure
+
+```text
+Atmos_Rokid/
+├── Atmos/                          # Android / Rokid Glasses client (Kotlin, Jetpack Compose, minSdk 28)
+│   └── app/src/main/java/com/example/atmos/
+│       ├── MainActivity.kt         # Camera2 session & UI lifecycle
+│       ├── network/
+│       │   ├── YoloUploader.kt     # High-frequency frame upload to /yolo
+│       │   └── FastVLMUploader.kt  # Periodic scene caption & audio playback from /detect
+│       ├── detection/              # Detection models & overlay view
+│       └── ui/CalibrationDialog.kt # Spatial alignment calibration
+└── Server/                         # macOS SwiftUI MenuBarExtra + Vapor HTTP server (:8080)
+    └── Server/
+        ├── App/                    # ServerApp, AppState, live preview ContentView
+        ├── Module/VaporServer.swift# /yolo and /detect HTTP endpoints
+        ├── Module/FastVLM/         # Apple FastVLM MLX wrapper (place weights in model/)
+        └── Module/YOLO/            # YOLODetector implementation
+```
+
+## FastVLM Model Setup
+
+Download one of Apple's pre-quantized FastVLM checkpoints based on your Mac's memory and latency budget:
+
+| Model Size | Precision | Download |
+| --- | --- | --- |
+| **0.5B** (fastest) | FP16 | [llava-fastvithd_0.5b_stage3_llm.fp16.zip](https://ml-site.cdn-apple.com/datasets/fastvlm/llava-fastvithd_0.5b_stage3_llm.fp16.zip) |
+| **1.5B** (balanced) | INT8 | [llava-fastvithd_1.5b_stage3_llm.int8.zip](https://ml-site.cdn-apple.com/datasets/fastvlm/llava-fastvithd_1.5b_stage3_llm.int8.zip) |
+| **7B** (richest) | INT4 | [llava-fastvithd_7b_stage3_llm.int4.zip](https://ml-site.cdn-apple.com/datasets/fastvlm/llava-fastvithd_7b_stage3_llm.int4.zip) |
+
+Unzip the archive, rename the extracted folder to `model`, and place it at:
+
+```text
 Server/Server/Module/FastVLM/model/
 ```
 
-## 服务端部署
+## Getting Started
 
-### 环境要求
+### 1. Start the Local Inference Server (macOS)
 
-- macOS 或 iOS 设备
-- Xcode
-- Swift 5.0+
+- **Requirements**: Apple Silicon Mac, Xcode 15+, Swift 5.9+
+- Open `Server/Server.xcodeproj` in Xcode and run the `Server` scheme.
+- Once running, the menu bar icon (`Atmos Server`) shows green and listens on `0.0.0.0:8080`.
 
-### 运行步骤
+### 2. Run the Android / Rokid Glasses Client
 
-1. 按照上述步骤部署 FastVLM 模型
-2. 打开 `Server/Server.xcodeproj`
-3. 在 Xcode 中构建并运行项目
+- **Requirements**: Android Studio, JDK 11+, Android SDK (minSdk 28, compileSdk 36)
+- Update the default server host IP in `Atmos/app/src/main/java/com/example/atmos/network/FastVLMUploader.kt` and `YoloUploader.kt` to match your Mac's LAN IP (`http://<your-mac-ip>:8080/...`).
+- Open `Atmos/` in Android Studio, sync Gradle, and deploy to your Rokid Glasses or Android test device on the same Wi-Fi network.
 
-## Android 客户端
+## Roadmap & Ways to Contribute
 
-### 环境要求
+This project started as a working hackathon prototype — contributions are very welcome! High-impact improvements include:
 
-- Android Studio
-- Gradle
+- **In-app server discovery / settings UI** (mDNS/Bonjour or editable IP preference instead of hardcoded defaults).
+- **Streaming transport** (WebSocket / WebRTC frame transport to cut per-request HTTP overhead).
+- **Spatial audio & hazard prioritization** (directional audio cues for approaching obstacles).
+- **On-device TTS fallback** and multilingual voice prompts.
 
-### 运行步骤
+See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 
-1. 打开 `Atmos` 文件夹
-2. 使用 Android Studio 打开项目
-3. 同步 Gradle 依赖
-4. 构建并运行应用
+## License
 
-## 功能特性
-
-- 本地部署的视觉语言模型推理
-- YOLO 目标检测集成
-- 跨平台支持（iOS/macOS 服务端 + Android 客户端）
+Licensed under the [MIT License](LICENSE).
